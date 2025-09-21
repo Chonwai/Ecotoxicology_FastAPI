@@ -6,9 +6,10 @@ from torch_geometric.nn import global_mean_pool
 import sys
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional, Dict
 from contextlib import asynccontextmanager
 from service.GCN import Smile2Graph
+from datetime import datetime
 
 sys.path.append('.')
 
@@ -71,6 +72,24 @@ class PredictResponse(BaseModel):
     status: str
     data: PredictData
 
+class HealthResponse(BaseModel):
+    status: str
+    message: str
+    timestamp: str
+
+class ModelStatus(BaseModel):
+    name: str
+    loaded: bool
+    path: str
+
+class DetailedHealthResponse(BaseModel):
+    status: str
+    message: str
+    timestamp: str
+    version: str
+    models: List[ModelStatus]
+    uptime: Optional[str] = None
+
 MODEL_PATHS = {
     "F2F": "service/model/F2F.pickle",
     "C2C": "service/model/C2C.pickle",
@@ -78,6 +97,7 @@ MODEL_PATHS = {
 }
 
 models = {}
+startup_time = datetime.now()
 
 def parse_fasta(fasta_str: str) -> List[str]:
     lines = fasta_str.strip().split('\n')
@@ -96,6 +116,82 @@ def parse_fasta(fasta_str: str) -> List[str]:
         smiles_list.append(current_smiles)
         
     return smiles_list
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """簡單的健康檢查端點"""
+    return HealthResponse(
+        status="healthy",
+        message="Service is running",
+        timestamp=datetime.now().isoformat()
+    )
+
+@app.get("/api/health", response_model=HealthResponse)
+async def api_health_check():
+    """API健康檢查，包含模型狀態檢查"""
+    try:
+        # 檢查是否有模型載入
+        loaded_models = [name for name, model in models.items() if model is not None]
+        
+        if not loaded_models:
+            return HealthResponse(
+                status="unhealthy",
+                message="No models loaded",
+                timestamp=datetime.now().isoformat()
+            )
+        
+        return HealthResponse(
+            status="healthy",
+            message=f"API is ready. Models loaded: {', '.join(loaded_models)}",
+            timestamp=datetime.now().isoformat()
+        )
+    except Exception as e:
+        return HealthResponse(
+            status="unhealthy",
+            message=f"Health check failed: {str(e)}",
+            timestamp=datetime.now().isoformat()
+        )
+
+@app.get("/api/status", response_model=DetailedHealthResponse)
+async def detailed_status():
+    """詳細的狀態信息"""
+    try:
+        # 計算運行時間
+        uptime_delta = datetime.now() - startup_time
+        uptime_str = str(uptime_delta).split('.')[0]  # 移除微秒
+        
+        # 檢查所有模型狀態
+        model_statuses = []
+        for name, path in MODEL_PATHS.items():
+            model_statuses.append(ModelStatus(
+                name=name,
+                loaded=name in models and models[name] is not None,
+                path=path
+            ))
+        
+        loaded_count = sum(1 for ms in model_statuses if ms.loaded)
+        total_count = len(model_statuses)
+        
+        status = "healthy" if loaded_count > 0 else "unhealthy"
+        message = f"Service is running. {loaded_count}/{total_count} models loaded."
+        
+        return DetailedHealthResponse(
+            status=status,
+            message=message,
+            timestamp=datetime.now().isoformat(),
+            version="1.0.0",
+            models=model_statuses,
+            uptime=uptime_str
+        )
+    except Exception as e:
+        return DetailedHealthResponse(
+            status="error",
+            message=f"Status check failed: {str(e)}",
+            timestamp=datetime.now().isoformat(),
+            version="1.0.0",
+            models=[],
+            uptime="unknown"
+        )
 
 @app.post("/api/predict")
 async def predict(request: PredictRequest):

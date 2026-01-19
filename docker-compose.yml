@@ -14,6 +14,7 @@ services:
     restart: always
     networks:
       - ecotoxicology-predict-fastapi
+      - axpep-ecosystem-network
     environment:
       - PYTHONUNBUFFERED=1      docker volume prune
     env_file:
@@ -22,3 +23,5 @@ services:
 networks:
   ecotoxicology-predict-fastapi:
     driver: bridge
+  axpep-ecosystem-network:
+    external: true
